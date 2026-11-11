@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Para ti</title>
+<style>
+  html,body{margin:0;height:100%;background:#07040f;overflow:hidden}
+  canvas{display:block;width:100%;height:100%;touch-action:none}
+  #msg{position:fixed;left:0;right:0;top:calc(env(safe-area-inset-top) + 28px);text-align:center;
+       font:italic 22px/1.3 Georgia,'Times New Roman',serif;color:#f3d6ff;letter-spacing:.5px;
+       text-shadow:0 0 12px rgba(255,120,220,.5);padding:0 20px;pointer-events:none;min-height:30px}
+  #sub{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 24px);text-align:center;
+       font:14px/1.4 Georgia,serif;color:#b89ad0;opacity:0;transition:opacity 2s;pointer-events:none;padding:0 20px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="msg"></div>
+<div id="sub"></div>
+
+<script>
+/* ============ PERSONALIZA AQUÍ ============ */
+const CONFIG = {
+  mensaje:  "With You, Even The Rain Feels Safe.",  // texto que se escribe arriba
+  firma:    "— Para ti, con amor",                  // texto pequeño al final (puede ir vacío "")
+  imagen:   "",            // ej. "foto.png" (silueta con fondo transparente o foto en blanco y negro). Vacío = silueta incluida
+  colorArriba: [255, 150, 215],   // rosa
+  colorAbajo:  [170, 130, 255],   // lila
+  densidad: 3,             // más bajo = más partículas (2–5)
+  segundosCaos: 2.2,       // tiempo que las partículas flotan antes de formar la imagen
+};
+/* ========================================= */
+
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let W, H, DPR, parts = [], T0 = performance.now(), pointer = {x:-999,y:-999};
+
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W*DPR; cv.height = H*DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+
+/* ---- Silueta por defecto (pareja bajo paraguas + farol), dibujada en un lienzo 600x800 ---- */
+function drawDefault(g){
+  g.fillStyle = g.strokeStyle = '#fff'; g.lineCap = g.lineJoin = 'round';
+  // farol
+  g.fillRect(66,230,14,540);
+  g.fillRect(48,740,50,30);
+  g.beginPath(); g.moveTo(46,230); g.lineTo(100,230); g.lineTo(90,170); g.lineTo(56,170); g.closePath(); g.fill();
+  g.beginPath(); g.moveTo(56,170); g.lineTo(73,130); g.lineTo(90,170); g.closePath(); g.fill();
+  g.fillRect(64,100,18,30);
+  // paraguas
+  g.beginPath(); g.arc(340,250,150,Math.PI,0);
+  const n=5, r=150/n*1; for(let i=0;i<n;i++){ g.arc(340+150-r*(2*i+1),250,r,0,Math.PI,false); }
+  g.closePath(); g.fill();
+  g.lineWidth=7; g.beginPath(); g.moveTo(340,250); g.lineTo(340,420); g.stroke();
+  g.lineWidth=7; g.beginPath(); g.arc(325,420,15,0,Math.PI); g.stroke();
+  g.beginPath(); g.arc(340,98,6,0,7); g.fill();
+  // él
+  g.beginPath(); g.arc(215,370,30,0,7); g.fill();
+  g.lineWidth=46; g.beginPath(); g.moveTo(222,420); g.lineTo(235,545); g.stroke();      // torso
+  g.lineWidth=20; g.beginPath(); g.moveTo(228,420); g.lineTo(285,395); g.lineTo(335,418); g.stroke(); // brazo al paraguas
+  g.lineWidth=18; g.beginPath(); g.moveTo(210,430); g.lineTo(130,470); g.lineTo(88,455); g.stroke();  // brazo al farol
+  g.lineWidth=26; g.beginPath(); g.moveTo(232,545); g.lineTo(190,640); g.lineTo(120,700); g.stroke(); // pierna doblada
+  g.lineWidth=26; g.beginPath(); g.moveTo(238,545); g.lineTo(285,640); g.lineTo(280,735); g.stroke(); // pierna
+  // ella
+  g.beginPath(); g.arc(425,390,24,0,7); g.fill();
+  g.beginPath(); g.moveTo(412,420); g.lineTo(440,420); g.lineTo(500,640); g.lineTo(365,640); g.closePath(); g.fill(); // vestido
+  g.lineWidth=14; g.beginPath(); g.moveTo(414,430); g.lineTo(380,470); g.lineTo(345,440); g.stroke();  // brazo
+  g.lineWidth=12; g.beginPath(); g.moveTo(410,640); g.lineTo(405,760); g.moveTo(450,640); g.lineTo(458,760); g.stroke();
+}
+
+function sampleTargets(cb){
+  const SW=600, SH=800, off=document.createElement('canvas'); off.width=SW; off.height=SH;
+  const g=off.getContext('2d', {willReadFrequently:true});
+  const finish = ()=>{
+    const d=g.getImageData(0,0,SW,SH).data, pts=[];
+    const step=CONFIG.densidad;
+    for(let y=0;y<SH;y+=step) for(let x=0;x<SW;x+=step){
+      const i=(y*SW+x)*4, a=d[i+3], lum=(d[i]+d[i+1]+d[i+2])/3;
+      if(a>128 && lum>110) pts.push([x,y]);
+    }
+    cb(pts,SW,SH);
+  };
+  if(CONFIG.imagen){
+    const im=new Image(); im.onload=()=>{
+      g.fillStyle='#000'; g.fillRect(0,0,SW,SH);
+      const s=Math.min(SW/im.width,SH/im.height), w=im.width*s, h=im.height*s;
+      g.drawImage(im,(SW-w)/2,(SH-h)/2,w,h); finish();
+    }; im.onerror=()=>{drawDefault(g);finish()}; im.src=CONFIG.imagen;
+  } else { drawDefault(g); finish(); }
+}
+
+function build(pts,SW,SH){
+  const s=Math.min(W/SW,(H*0.78)/SH), ox=(W-SW*s)/2, oy=H*0.14+((H*0.78)-SH*s)/2;
+  parts = pts.map(([x,y])=>{
+    const t=y/SH, c=CONFIG.colorArriba.map((v,i)=>v+(CONFIG.colorAbajo[i]-v)*t);
+    return {x:Math.random()*W, y:Math.random()*H, vx:0, vy:0,
+            tx:ox+(x+(Math.random()-.5)*CONFIG.densidad)*s, ty:oy+(y+(Math.random()-.5)*CONFIG.densidad)*s, r:Math.max(.9,s*1.1), c:`rgb(${c[0]|0},${c[1]|0},${c[2]|0})`,
+            d:Math.random()*1.2, ph:Math.random()*6.28};
+  });
+  // lluvia/estrellas de fondo
+  for(let i=0;i<220;i++) parts.push({x:Math.random()*W,y:Math.random()*H,vx:0,vy:0,tx:null,r:Math.random()*1.1+.3,c:'rgba(200,170,255,.55)',d:0,ph:Math.random()*6.28});
+}
+
+/* ---- Texto que se escribe ---- */
+const msgEl=document.getElementById('msg'), subEl=document.getElementById('sub');
+let typed=0, typing=false;
+function startTyping(){
+  if(typing) return; typing=true;
+  const id=setInterval(()=>{
+    msgEl.textContent=CONFIG.mensaje.slice(0,++typed);
+    if(typed>=CONFIG.mensaje.length){clearInterval(id); subEl.textContent=CONFIG.firma; subEl.style.opacity=1;}
+  },90);
+}
+
+function frame(now){
+  const t=(now-T0)/1000;
+  ctx.fillStyle='rgba(7,4,15,.28)'; ctx.fillRect(0,0,W,H);
+  const form = t>CONFIG.segundosCaos;
+  if(t>CONFIG.segundosCaos+1.5) startTyping();
+  for(const p of parts){
+    if(p.tx===null){ // lluvia
+      p.y+=1.2+p.r*1.5; p.x+=Math.sin(t+p.ph)*.2; if(p.y>H){p.y=-5;p.x=Math.random()*W}
+    } else if(!form){ // flotan
+      p.vx+=Math.sin(t*1.3+p.ph)*.03; p.vy+=Math.cos(t*1.1+p.ph)*.03+.02;
+      p.vx*=.98; p.vy*=.98; p.x+=p.vx; p.y+=p.vy;
+      if(p.y>H)p.y=0; if(p.x<0)p.x=W; if(p.x>W)p.x=0;
+    } else if(t-CONFIG.segundosCaos>p.d){ // se acomodan
+      p.vx+=(p.tx-p.x)*.012; p.vy+=(p.ty-p.y)*.012;
+      p.vx*=.86; p.vy*=.86;
+      const dx=p.x-pointer.x, dy=p.y-pointer.y, dd=dx*dx+dy*dy;
+      if(dd<6400){const f=(80-Math.sqrt(dd))*.06, m=Math.sqrt(dd)+.01; p.vx+=dx/m*f; p.vy+=dy/m*f;}
+      p.x+=p.vx; p.y+=p.vy;
+    }
+    ctx.fillStyle=p.c; ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,6.283); ctx.fill();
+  }
+  requestAnimationFrame(frame);
+}
+
+function setPointer(e){const q=e.touches?e.touches[0]:e; pointer.x=q.clientX; pointer.y=q.clientY;}
+addEventListener('pointermove',setPointer); addEventListener('touchmove',setPointer,{passive:true});
+addEventListener('pointerleave',()=>{pointer.x=pointer.y=-999});
+addEventListener('touchend',()=>{pointer.x=pointer.y=-999});
+cv.addEventListener('click',()=>{T0=performance.now();typed=0;typing=false;msgEl.textContent='';subEl.style.opacity=0;sampleTargets(build)});
+addEventListener('resize',()=>{resize();sampleTargets(build)});
+
+resize(); sampleTargets(build); requestAnimationFrame(frame);
+</script>
+</body>
+</html>
